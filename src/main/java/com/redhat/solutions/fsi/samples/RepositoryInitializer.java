@@ -1,5 +1,10 @@
 package com.redhat.solutions.fsi.samples;
 
+import org.apache.commons.io.IOUtils;
+import org.appformer.maven.integration.MavenRepository;
+import org.kie.api.KieServices;
+import org.kie.api.builder.KieFileSystem;
+import org.kie.api.builder.ReleaseId;
 import org.springframework.beans.factory.annotation.Value;
 import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
@@ -14,6 +19,7 @@ import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import javax.annotation.PostConstruct;
 import org.apache.commons.logging.Log;
@@ -42,11 +48,26 @@ public class RepositoryInitializer {
     @Value("${cfkieserver.remoterepo.pass}")
     private String repoteRepoPass;
 
+    @Value("${cfkieserver.local.groupId}")
+    private String groupId;
+
+    @Value("${cfkieserver.local.artifactId}")
+    private String artifactId;
+
+    @Value("${cfkieserver.local.version}")
+    private String version;
+
 
     @PostConstruct
     public void init() {
         if(!isRemoteRepoEnabled) {
-            logger.info("KIE remote repository is disabled");
+            logger.info("KIE remote repository is disabled, using local configuration");
+            try {
+                loadToMaven(groupId,artifactId,version);
+            } catch (IOException e) {
+                logger.error("Error loading kjar from classpath", e);
+            }
+
         } else {
             logger.info("Initializing KIE remote repository Settings");
             initializeDirectories();
@@ -87,5 +108,22 @@ public class RepositoryInitializer {
         for (int idx = 0; idx < urls.getLength(); idx++) {
             urls.item(idx).setTextContent(content);
         }
+    }
+
+    private ReleaseId loadToMaven(String groupId, String artifactId, String version) throws IOException {
+        KieFileSystem kfs = KieServices.Factory.get().newKieFileSystem();
+        ReleaseId id = KieServices.Factory.get().newReleaseId(groupId, artifactId, version);
+        kfs.generateAndWritePomXML(id);
+        byte[] pom = kfs.read("pom.xml");
+
+        InputStream kjarIs = this.getClass().getClassLoader()
+                .getResourceAsStream(String.format("META-INF/processes/%s-%s.jar", artifactId, version));
+
+        byte[] kjar = IOUtils.toByteArray(kjarIs);
+
+        MavenRepository.getMavenRepository().installArtifact(id, kjar, pom);
+
+        return id;
+
     }
 }
